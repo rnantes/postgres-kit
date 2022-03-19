@@ -1,43 +1,31 @@
+import XCTest
 import PostgresKit
+import Logging
+#if canImport(Darwin)
+import Darwin.C
+#else
+import Glibc
+#endif
 
 extension PostgresConnection {
     static func test(on eventLoop: EventLoop) -> EventLoopFuture<PostgresConnection> {
-        do {
-            let address: SocketAddress
-            address = try .makeAddressResolvingHost(hostname, port: PostgresConfiguration.ianaPortNumber)
-            return connect(to: address, on: eventLoop).flatMap { conn in
-                return conn.authenticate(
-                    username: "vapor_username",
-                    database: "vapor_database",
-                    password: "vapor_password"
-                ).map { conn }
-            }
-        } catch {
-            return eventLoop.makeFailedFuture(error)
-        }
+        return PostgresConnectionSource(configuration: .test).makeConnection(logger: .init(label: "vapor.codes.postgres-kit.test"), on: eventLoop)
     }
 }
 
 extension PostgresConfiguration {
     static var test: Self {
         .init(
-            hostname: hostname,
-            port: Self.ianaPortNumber,
-            username: "vapor_username",
-            password: "vapor_password",
-            database: "vapor_database"
+            hostname: env("POSTGRES_HOSTNAME") ?? "localhost",
+            port: env("POSTGRES_PORT").flatMap(Int.init) ?? Self.ianaPortNumber,
+            username: env("POSTGRES_USER") ?? "vapor_username",
+            password: env("POSTGRES_PASSWORD") ?? "vapor_password",
+            database: env("POSTGRES_DB") ?? "vapor_database",
+            tlsConfiguration: nil
         )
     }
 }
 
-var hostname: String {
-    if let hostname = env("POSTGRES_HOSTNAME") {
-        return hostname
-    } else {
-        #if os(Linux)
-        return "psql"
-        #else
-        return "127.0.0.1"
-        #endif
-    }
+func env(_ name: String) -> String? {
+    getenv(name).flatMap { String(cString: $0) }
 }

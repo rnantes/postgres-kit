@@ -1,63 +1,111 @@
 name: test
-on:
-- pull_request
+on: [ 'pull_request' ]
+
 jobs:
-  postgres-kit_xenial:
-    container: 
-      image: vapor/swift:5.2-xenial
-    services:
-      psql:
-        image: postgres
-        ports:
-          - 5432:5432
-        env:
-          POSTGRES_USER: vapor_username
-          POSTGRES_DB: vapor_database
-          POSTGRES_PASSWORD: vapor_password
+  linux-plus-dependents:
+    strategy:
+      fail-fast: false
+      matrix:
+        dbimage:
+          - postgres:14
+          - postgres:13
+          - postgres:11
+        dbauth:
+          - trust
+          - md5
+          - scram-sha-256
+        swiftver:
+          - swift:5.2
+          - swift:5.5
+          - swift:5.6
+          - swiftlang/swift:nightly-main
+        swiftos:
+          - focal
+        include:
+          - swiftver: swift:5.2
+            test_flag: --enable-test-discovery
+    container: ${{ format('{0}-{1}', matrix.swiftver, matrix.swiftos) }}
     runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v1
-    - run: swift test --enable-test-discovery --sanitize=thread
-  postgres-kit_bionic:
-    container: 
-      image: vapor/swift:5.2-bionic
+    env:
+      LOG_LEVEL: debug
+      POSTGRES_HOSTNAME: 'psql-a'
+      POSTGRES_HOSTNAME_A: 'psql-a'
+      POSTGRES_HOSTNAME_B: 'psql-b'
+      POSTGRES_DB: 'test_database'
+      POSTGRES_DB_A: 'test_database'
+      POSTGRES_DB_B: 'test_database'
+      POSTGRES_USER: 'test_username'
+      POSTGRES_USER_A: 'test_username'
+      POSTGRES_USER_B: 'test_username'
+      POSTGRES_PASSWORD: 'test_password'
+      POSTGRES_PASSWORD_A: 'test_password'
+      POSTGRES_PASSWORD_B: 'test_password'
     services:
-      psql:
-        image: postgres
-        ports:
-          - 5432:5432
+      psql-a:
+        image: ${{ matrix.dbimage }}
         env:
-          POSTGRES_USER: vapor_username
-          POSTGRES_DB: vapor_database
-          POSTGRES_PASSWORD: vapor_password
-    runs-on: ubuntu-latest
+          POSTGRES_USER: 'test_username'
+          POSTGRES_DB: 'test_database'
+          POSTGRES_PASSWORD: 'test_password'
+          POSTGRES_HOST_AUTH_METHOD: ${{ matrix.dbauth }}
+          POSTGRES_INITDB_ARGS: --auth-host=${{ matrix.dbauth }}
+      psql-b:
+        image: ${{ matrix.dbimage }}
+        env:
+          POSTGRES_USER: 'test_username'
+          POSTGRES_DB: 'test_database'
+          POSTGRES_PASSWORD: 'test_password'
+          POSTGRES_HOST_AUTH_METHOD: ${{ matrix.dbauth }}
+          POSTGRES_INITDB_ARGS: --auth-host=${{ matrix.dbauth }}
     steps:
-    - uses: actions/checkout@v1
-    - run: swift test --enable-test-discovery --sanitize=thread
-  fluent-postgres-driver:
-    container: 
-      image: vapor/swift:5.2
-    services:
-      postgres-a:
-        image: postgres
-        env:
-          POSTGRES_USER: vapor_username
-          POSTGRES_DB: vapor_database
-          POSTGRES_PASSWORD: vapor_password
-      postgres-b:
-        image: postgres
-        env:
-          POSTGRES_USER: vapor_username
-          POSTGRES_DB: vapor_database
-          POSTGRES_PASSWORD: vapor_password
-    runs-on: ubuntu-latest
+      - name: Check out package
+        uses: actions/checkout@v3
+        with: { path: 'postgres-kit' }
+      - name: Check out fluent-postgres-driver dependent
+        uses: actions/checkout@v3
+        with: { repository: 'vapor/fluent-postgres-driver', path: 'fluent-postgres-driver' }
+      - name: Run local tests with Thread Sanitizer
+        run: swift test --package-path postgres-kit ${{ matrix.test_flag }} --sanitize=thread
+      - name: Use local package
+        run: swift package --package-path fluent-postgres-driver edit postgres-kit --path postgres-kit
+      - name: Run fluent-postgres-kit tests with Thread Sanitizer
+        run: swift test --package-path fluent-postgres-driver ${{ matrix.test_flag }} --sanitize=thread
+
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        # Only test latest version and one auth method on macOS
+        dbimage:
+          - postgresql@14
+        dbauth:
+          - scram-sha-256
+        xcode:
+          - latest-stable
+          #- latest
+    runs-on: macos-11
+    env:
+      LOG_LEVEL: debug
+      POSTGRES_HOSTNAME: 127.0.0.1
+      POSTGRES_USER: test_username
+      POSTGRES_PASSWORD: test_password
+      POSTGRES_DB: postgres
+      POSTGRES_HOST_AUTH_METHOD: ${{ matrix.dbauth }}
     steps:
-    - run: git clone -b main https://github.com/vapor/fluent-postgres-driver.git
-      working-directory: ./
-    - run: swift package edit postgres-kit --revision ${{ github.sha }}
-      working-directory: ./fluent-postgres-driver
-    - run: swift test --enable-test-discovery --sanitize=thread
-      working-directory: ./fluent-postgres-driver
-      env:
-        POSTGRES_HOSTNAME_A: postgres-a
-        POSTGRES_HOSTNAME_B: postgres-b
+      - name: Select latest available Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: ${{ matrix.xcode }}
+      - name: Install Postgres, setup DB and auth, and wait for server start
+        run: |
+          export PATH="$(brew --prefix)/opt/${{ matrix.formula }}/bin:$PATH" PGDATA=/tmp/vapor-postgres-test
+          (brew unlink postgresql || true) && brew install ${{ matrix.dbimage }} && brew link --force ${{ matrix.dbimage }}
+          initdb --locale=C --auth-host ${{ matrix.dbauth }} -U $POSTGRES_USER --pwfile=<(echo $POSTGRES_PASSWORD)
+          pg_ctl start --wait
+        timeout-minutes: 2
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Run local tests with Thread Sanitizer
+        run: |
+          swift test --sanitize=thread -Xlinker -rpath \
+                -Xlinker $(xcode-select -p)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.5/macosx
