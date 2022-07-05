@@ -119,6 +119,7 @@ class PostgresKitTests: XCTestCase {
             var foo: String
             var bar: String?
             var baz: String?
+            var created: Date
         }
 
         let test = try row.sql().decode(model: Test.self)
