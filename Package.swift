@@ -1,10 +1,10 @@
-// swift-tools-version:5.4
+// swift-tools-version:5.7
 import PackageDescription
 
 let package = Package(
     name: "postgres-kit",
     platforms: [
-       .macOS(.v10_15)
+        .macOS(.v13)
     ],
     products: [
         .library(name: "PostgresKit", targets: ["PostgresKit"]),
