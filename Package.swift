@@ -4,7 +4,7 @@ import PackageDescription
 let package = Package(
     name: "postgres-kit",
     platforms: [
-        .macOS(.v13)
+        .macOS(.v10_15)
     ],
     products: [
         .library(name: "PostgresKit", targets: ["PostgresKit"]),
